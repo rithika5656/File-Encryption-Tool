@@ -48,9 +48,9 @@ def encrypt():
             final_filename = os.path.basename(output_path)
             final_path = os.path.join(app.config['DOWNLOAD_FOLDER'], final_filename)
             
-            # If encrypt_file saved it elsewhere, move it. 
-            # Looking at existing encryption.py, it saves next to input file.
             # So output_path is likely in UPLOAD_FOLDER.
+            if os.path.exists(final_path):
+                os.remove(final_path)
             os.rename(output_path, final_path)
             
             # Cleanup input file
