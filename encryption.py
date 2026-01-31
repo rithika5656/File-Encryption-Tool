@@ -9,7 +9,7 @@ import secrets
 from pathlib import Path
 from typing import Tuple, Optional, Callable, Union
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.exceptions import InvalidKey
@@ -165,8 +165,10 @@ def decrypt_file(
         
         try:
             decrypted_data = cipher.decrypt(encrypted_data)
-        except InvalidKey:
+        except InvalidToken:
              raise DecryptionError("Incorrect password or corrupted data.")
+        except InvalidKey:
+             raise DecryptionError("Incorrect key format.")
         except Exception as e:
              raise DecryptionError(f"Decryption failed: {str(e)}") from e
              
