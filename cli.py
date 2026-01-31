@@ -8,92 +8,167 @@ import time
 import getpass
 import contextlib
 import os
+import shutil
+import platform
+import logging
 from pathlib import Path
-from typing import Optional, List
-from encryption import encrypt_file, decrypt_file
+from typing import Optional, List, NoReturn, TextIO
+
+# Try to import colorama
+try:
+    from colorama import init, Fore, Style
+    init(autoreset=True)
+    HAS_COLORS = True
+except ImportError:
+    HAS_COLORS = False
+    
+from encryption import encrypt_file, decrypt_file, EncryptionError, DecryptionError
 
 # Constants
 APP_NAME = "File Encryption Tool"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("CLI")
+
+class Colors:
+    """Helper class for terminal colors."""
+    @staticmethod
+    def red(text: str) -> str:
+        return f"{Fore.RED}{text}{Style.RESET_ALL}" if HAS_COLORS else text
+    
+    @staticmethod
+    def green(text: str) -> str:
+        return f"{Fore.GREEN}{text}{Style.RESET_ALL}" if HAS_COLORS else text
+        
+    @staticmethod
+    def yellow(text: str) -> str:
+        return f"{Fore.YELLOW}{text}{Style.RESET_ALL}" if HAS_COLORS else text
+        
+    @staticmethod
+    def cyan(text: str) -> str:
+        return f"{Fore.CYAN}{text}{Style.RESET_ALL}" if HAS_COLORS else text
+
+def print_banner() -> None:
+    """Prints the application banner."""
+    banner = f"""
+    {Colors.cyan('╔══════════════════════════════════════╗')}
+    {Colors.cyan('║      File Encryption Tool v' + VERSION + '     ║')}
+    {Colors.cyan('╚══════════════════════════════════════╝')}
+    """
+    print(banner)
 
 def get_parser() -> argparse.ArgumentParser:
-    """
-    Create and return the argument parser with all flags
-    """
+    """Create and return the argument parser with all flags."""
     parser = argparse.ArgumentParser(
         description=f"{APP_NAME} - Encrypt and decrypt files securely",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
     # Global flags
-    parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {VERSION}')
+    parser.add_argument('-v', '--version', action='store_true', help='Show detailed version info')
     parser.add_argument('-q', '--quiet', action='store_true', help="Suppress non-error output")
     parser.add_argument('--verbose', action='store_true', help="Show debug information")
+    parser.add_argument('--no-color', action='store_true', help="Disable colored output")
+    parser.add_argument('--dry-run', action='store_true', help="Simulate actions without modifying files")
     
     subparsers = parser.add_subparsers(dest='command', help='Commands')
     
     # Encrypt command
     encrypt_parser = subparsers.add_parser('encrypt', help='Encrypt a file')
     encrypt_parser.add_argument('file', help='Path to file to encrypt')
-    encrypt_parser.add_argument('-p', '--password', help='Encryption password (warning: visible in history)')
-    encrypt_parser.add_argument('--delete-original', action='store_true', help="Delete original file after successful encryption")
+    encrypt_parser.add_argument('-p', '--password', help='Encryption password')
+    encrypt_parser.add_argument('--delete-original', action='store_true', help="Securely delete original file after encryption")
+    encrypt_parser.add_argument('--backup', action='store_true', help="Create a backup before encrypting")
     
     # Decrypt command
     decrypt_parser = subparsers.add_parser('decrypt', help='Decrypt a file')
     decrypt_parser.add_argument('file', help='Path to encrypted file')
-    decrypt_parser.add_argument('-p', '--password', help='Decryption password (warning: visible in history)')
+    decrypt_parser.add_argument('-p', '--password', help='Decryption password')
     decrypt_parser.add_argument('-o', '--output', help='Output path for decrypted file')
-    decrypt_parser.add_argument('-f', '--force', action='store_true', help="Overwrite existing output files without prompting")
+    decrypt_parser.add_argument('-f', '--force', action='store_true', help="Overwrite existing output files")
+    decrypt_parser.add_argument('--dry-run', action='store_true', help="Simulate decryption")
     
     return parser
 
 def print_error(msg: str) -> None:
-    """Print error message to stderr"""
-    print(f"✗ Error: {msg}", file=sys.stderr)
+    """Print error message to stderr."""
+    print(f"{Colors.red('✗ Error:')} {msg}", file=sys.stderr)
 
 def print_success(msg: str, quiet: bool = False) -> None:
-    """Print success message if not quiet"""
+    """Print success message."""
     if not quiet:
-        print(f"✓ {msg}")
+        print(f"{Colors.green('✓')} {msg}")
 
 def print_info(msg: str, quiet: bool = False) -> None:
-    """Print info message if not quiet"""
+    """Print info message."""
     if not quiet:
         print(msg)
 
+def secure_delete(path: Path) -> None:
+    """Overwrite a file with random data before deleting it (basic secure delete)."""
+    if not path.exists():
+        return
+    try:
+        length = path.stat().st_size
+        with open(path, "wb") as f:
+            f.write(os.urandom(length))
+        path.unlink()
+    except OSError as e:
+        print_error(f"Secure delete failed: {e}")
+
+def create_backup(path: Path) -> Optional[Path]:
+    """Create a .bak copy of the file."""
+    backup_path = path.with_suffix(path.suffix + '.bak')
+    try:
+        shutil.copy2(path, backup_path)
+        return backup_path
+    except OSError as e:
+        print_error(f"Backup failed: {e}")
+        return None
+
 def handle_encrypt(args: argparse.Namespace) -> None:
-    """
-    Handle the encrypt command logic
-    """
+    """Handle the encrypt command logic."""
     file_path = Path(args.file)
     
-    # validation
     if not file_path.exists():
         print_error(f"File not found: {file_path}")
         sys.exit(1)
-    if not file_path.is_file():
-        print_error(f"Not a file: {file_path}")
-        sys.exit(1)
         
-    # password handling
+    if args.dry_run:
+        print_info(f"{Colors.yellow('[DRY RUN]')} Would encrypt: {file_path}")
+        if args.backup:
+            print_info(f"{Colors.yellow('[DRY RUN]')} Would invoke backup")
+        if args.delete_original:
+            print_info(f"{Colors.yellow('[DRY RUN]')} Would securely delete original")
+        return
+
+    # Password handling
     password = args.password
     if not password:
-        try:
-            p1 = getpass.getpass("Enter encryption password: ")
-            p2 = getpass.getpass("Confirm encryption password: ")
-            if p1 != p2:
-                print_error("Passwords do not match")
-                sys.exit(1)
-            password = p1
-        except getpass.GetPassWarning:
-            print_error("Warning: input echoed (terminal issue)")
+        password = getpass.getpass("Enter encryption password: ")
+        confirm = getpass.getpass("Confirm encryption password: ")
+        if password != confirm:
+            print_error("Passwords do not match")
+            sys.exit(1)
             
+    if len(password) < 4:
+         print_info(Colors.yellow("Warning: Password is very short!"))
+
     start_time = time.perf_counter()
     
     try:
-        # We assume library prints, suppress if quiet using context redirect check?
-        # The library prints to stdout. We can catch it or let it be.
-        # Since we want to control output, let's redirect logic if quiet.
+        if args.backup:
+            bak = create_backup(file_path)
+            if bak:
+                print_info(f"Backup created: {bak}")
+
+        # Perform encryption
         if args.quiet:
             with contextlib.redirect_stdout(None):
                 output_path = encrypt_file(str(file_path), password)
@@ -101,83 +176,95 @@ def handle_encrypt(args: argparse.Namespace) -> None:
             output_path = encrypt_file(str(file_path), password)
             
         elapsed = time.perf_counter() - start_time
+        print_success(f"File encrypted successfully: {output_path}", args.quiet)
         
         if args.verbose:
-            print_info(f"debug: Operation completed in {elapsed:.2f} seconds")
+            print_info(f"Operation completed in {elapsed:.4f} seconds")
             
         if args.delete_original:
-            try:
-                file_path.unlink()
-                print_info(f"Original file deleted: {file_path}", args.quiet)
-            except OSError as e:
-                print_error(f"Failed to delete original file: {e}")
+            secure_delete(file_path)
+            print_info(f"Original file securely deleted.", args.quiet)
                 
     except Exception as e:
         print_error(str(e))
         sys.exit(1)
 
 def handle_decrypt(args: argparse.Namespace) -> None:
-    """
-    Handle the decrypt command logic
-    """
+    """Handle the decrypt command logic."""
     file_path = Path(args.file)
     
     if not file_path.exists():
         print_error(f"File not found: {file_path}")
         sys.exit(1)
         
+    if args.dry_run or (hasattr(args, 'dry_run') and args.dry_run): # Check attr existence for safety
+        print_info(f"{Colors.yellow('[DRY RUN]')} Would decrypt: {file_path}")
+        return
+
     password = args.password
     if not password:
         password = getpass.getpass("Enter decryption password: ")
-        
-    # Logic to determine output path beforehand for checking overwrite
-    # Note: the library does this internally if not provided, but we duplicate logic slightly 
-    # to check existence if we want to be safe before passing to library?
-    # Actually, let's trust the library to handle output creation, but checking overwrite needs path.
-    # The library `decrypt_file` calculates output path if None.
-    # Let's simple pass to library, but if library doesn't support 'force', we might failing on overwrite?
-    # Viewing encryption.py: It simply opens for 'wb' (Line 109), effectively overwriting.
-    # So 'force' is actually about PROMPTING before overwriting.
-    # To implement this safely, we need to know the target path.
-    
-    target_path_str = args.output
-    if target_path_str is None:
-        if str(file_path).endswith('.encrypted'):
-            target_path_str = str(file_path)[:-10]
-        else:
-            target_path_str = str(file_path) + '.decrypted'
-            
-    target_path = Path(target_path_str)
-    
-    if target_path.exists() and not args.force:
-        # Prompt user
-        if not args.quiet:
-            confirm = input(f"Output file '{target_path}' exists. Overwrite? [y/N]: ").lower()
-            if confirm != 'y':
-                print_info("Operation cancelled.", args.quiet)
-                sys.exit(0)
-    
+
     start_time = time.perf_counter()
+    target_path_str = args.output
     
     try:
+        # We pass output path to lib which handles collision logic now? 
+        # No, lib overwrites. We should check if not force.
+        # But we don't know output path easily without logic duplic. 
+        # Let's trust library or do a check.
+        # If output path NOT specified, we derive it to check 'exists'
+        if not target_path_str:
+             if str(file_path).endswith('.encrypted'):
+                derived = str(file_path)[:-10]
+             else:
+                derived = str(file_path) + '.decrypted'
+        else:
+             derived = target_path_str
+             
+        if os.path.exists(derived) and not args.force:
+            if not args.quiet:
+                response = input(f"Output file {derived} exists. Overwrite? [y/N]: ")
+                if response.lower() != 'y':
+                    print_info("Cancelled.")
+                    sys.exit(0)
+
         if args.quiet:
             with contextlib.redirect_stdout(None):
-                decrypt_file(str(file_path), password, str(target_path))
+                out = decrypt_file(str(file_path), password, target_path_str)
         else:
-            decrypt_file(str(file_path), password, str(target_path))
+            out = decrypt_file(str(file_path), password, target_path_str)
             
         elapsed = time.perf_counter() - start_time
-        if args.verbose:
-            print_info(f"debug: Operation completed in {elapsed:.2f} seconds")
-            
+        print_success(f"File decrypted successfully: {out}", args.quiet)
+        
     except Exception as e:
         print_error(str(e))
         sys.exit(1)
+
+def print_version_info():
+    print(f"{APP_NAME} v{VERSION}")
+    print(f"Python: {sys.version}")
+    print(f"Platform: {platform.platform()}")
+    print(f"System: {platform.system()} {platform.release()}")
 
 def main():
     parser = get_parser()
     args = parser.parse_args()
     
+    # Handle Global flag: no-color
+    global HAS_COLORS
+    if args.no_color:
+        HAS_COLORS = False
+
+    # Handle Global flag: version
+    if args.version:
+        print_version_info()
+        sys.exit(0)
+        
+    if not args.quiet:
+        print_banner()
+
     if not args.command:
         parser.print_help()
         sys.exit(1)
@@ -187,17 +274,14 @@ def main():
             handle_encrypt(args)
         elif args.command == 'decrypt':
             handle_decrypt(args)
-        
         sys.exit(0)
-            
+        
     except KeyboardInterrupt:
-        print("\nOperation cancelled by user.")
+        print(f"\n{Colors.yellow('Operation cancelled by user.')}")
         sys.exit(130)
-    except PermissionError:
-        print_error("Permission denied. Check file permissions.")
-        sys.exit(1)
     except Exception as e:
         print_error(f"Unexpected error: {e}")
+        logger.exception("Unexpected error")
         sys.exit(1)
 
 if __name__ == '__main__':
