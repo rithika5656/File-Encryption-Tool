@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure File Encryption</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <i class="fa-solid fa-shield-halved"></i>
+                <h1>FileGuard</h1>
+            </div>
+            <p>Secure AES-128 Encryption for your sensitive files</p>
+        </header>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for message in messages %}
+                        <div class="alert error">
+                            <i class="fa-solid fa-circle-exclamation"></i>
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        {% if success %}
+            <div class="alert success">
+                <div class="success-icon">
+                    <i class="fa-solid fa-check"></i>
+                </div>
+                <div class="success-content">
+                    <h3>Success!</h3>
+                    <p>File <strong>{{ action | lower }}ed</strong> successfully.</p>
+                </div>
+                <a href="{{ url_for('download_file', filename=filename) }}" class="btn download-btn">
+                    <i class="fa-solid fa-download"></i> Download {{ filename }}
+                </a>
+            </div>
+        {% endif %}
+
+        <div class="card">
+            <div class="tabs">
+                <button class="tab-btn active" onclick="openTab(event, 'encrypt')">
+                    <i class="fa-solid fa-lock"></i> Encrypt
+                </button>
+                <button class="tab-btn" onclick="openTab(event, 'decrypt')">
+                    <i class="fa-solid fa-lock-open"></i> Decrypt
+                </button>
+            </div>
+
+            <div id="encrypt" class="tab-content active">
+                <form action="/encrypt" method="post" enctype="multipart/form-data">
+                    <div class="upload-area" id="upload-encrypt">
+                        <i class="fa-solid fa-cloud-arrow-up"></i>
+                        <p>Drag & Drop files here or <span>Browse</span></p>
+                        <input type="file" name="file" id="file-encrypt" required>
+                        <div class="file-name" id="name-encrypt"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pass-encrypt">Encryption Password</label>
+                        <div class="password-wrapper">
+                            <input type="password" name="password" id="pass-encrypt" placeholder="Enter a strong password" required>
+                            <i class="fa-regular fa-eye toggle-pass" onclick="togglePass('pass-encrypt')"></i>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn primary-btn">
+                        Encrypt File <i class="fa-solid fa-arrow-right"></i>
+                    </button>
+                </form>
+            </div>
+
+            <div id="decrypt" class="tab-content">
+                <form action="/decrypt" method="post" enctype="multipart/form-data">
+                    <div class="upload-area" id="upload-decrypt">
+                        <i class="fa-solid fa-file-shield"></i>
+                        <p>Drag & Drop encrypted files here or <span>Browse</span></p>
+                        <input type="file" name="file" id="file-decrypt" required>
+                        <div class="file-name" id="name-decrypt"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pass-decrypt">Decryption Password</label>
+                        <div class="password-wrapper">
+                            <input type="password" name="password" id="pass-decrypt" placeholder="Enter your password" required>
+                            <i class="fa-regular fa-eye toggle-pass" onclick="togglePass('pass-decrypt')"></i>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn secondary-btn">
+                        Decrypt File <i class="fa-solid fa-unlock"></i>
+                    </button>
+                </form>
+            </div>
+        </div>
+        
+        <footer>
+            <p>🔒 Files are processed locally and deleted immediately after download.</p>
+        </footer>
+    </div>
+
+    <script>
+        function openTab(evt, tabName) {
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tab-content");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+                tabcontent[i].classList.remove("active");
+            }
+            tablinks = document.getElementsByClassName("tab-btn");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].classList.remove("active");
+            }
+            document.getElementById(tabName).style.display = "block";
+            document.getElementById(tabName).classList.add("active");
+            evt.currentTarget.classList.add("active");
+        }
+
+        function togglePass(id) {
+            var x = document.getElementById(id);
+            var icon = x.nextElementSibling;
+            if (x.type === "password") {
+                x.type = "text";
+                icon.classList.remove("fa-eye");
+                icon.classList.add("fa-eye-slash");
+            } else {
+                x.type = "password";
+                icon.classList.add("fa-eye");
+                icon.classList.remove("fa-eye-slash");
+            }
+        }
+
+        // File upload handling
+        const uploadAreas = document.querySelectorAll('.upload-area');
+        uploadAreas.forEach(area => {
+            const input = area.querySelector('input[type="file"]');
+            const nameDisplay = area.querySelector('.file-name');
+
+            area.addEventListener('click', () => input.click());
+
+            input.addEventListener('change', (e) => {
+                if (input.files.length > 0) {
+                    nameDisplay.textContent = "Selected: " + input.files[0].name;
+                    area.classList.add('has-file');
+                }
+            });
+
+            area.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                area.classList.add('dragover');
+            });
+
+            area.addEventListener('dragleave', () => {
+                area.classList.remove('dragover');
+            });
+
+            area.addEventListener('drop', (e) => {
+                e.preventDefault();
+                area.classList.remove('dragover');
+                input.files = e.dataTransfer.files;
+                if (input.files.length > 0) {
+                    nameDisplay.textContent = "Selected: " + input.files[0].name;
+                    area.classList.add('has-file');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
